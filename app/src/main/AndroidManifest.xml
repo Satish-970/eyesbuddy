@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <!-- Optional: only requested/used if clap detection is enabled by the user -->
@@ -6,9 +6,9 @@
 
     <application
         android:allowBackup="true"
-        android:label="Eyes Buddy"
+        android:label="@string/app_name"
         android:theme="@style/Theme.EyesBuddy"
-        android:icon="@android:drawable/sym_def_app_icon"
+        android:icon="@drawable/ic_launcher"
         android:supportsRtl="true">
 
         <activity

@@ -1,6 +1,9 @@
-package com.example.eyesbuddy.animation
+﻿package com.example.eyesbuddy.animation
 
+import com.example.eyesbuddy.data.BlinkHint
+import com.example.eyesbuddy.data.WinkSide
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -8,60 +11,103 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlin.random.Random
 
-/**
- * Drives natural, involuntary blinking.
- * - Blinks every 3-8 seconds (randomised so it never feels mechanical).
- * - Each blink is a quick close/open (~120ms close, ~110ms open).
- * - Exposes eyeOpenAmount as a StateFlow<Float> for the UI to render.
- */
+/** Drives natural and expressive blinking independent of the behavior engine. */
 class BlinkManager(private val scope: CoroutineScope) {
 
     private val _eyeOpenAmount = MutableStateFlow(1f)
     val eyeOpenAmount: StateFlow<Float> = _eyeOpenAmount
 
-    private var forcedClosed = false // used for sleep state, overrides blinking
+    private val _leftOpenMultiplier = MutableStateFlow(1f)
+    val leftOpenMultiplier: StateFlow<Float> = _leftOpenMultiplier
+
+    private val _rightOpenMultiplier = MutableStateFlow(1f)
+    val rightOpenMultiplier: StateFlow<Float> = _rightOpenMultiplier
+
+    private var forcedDrowsy = false
+    private var loopJob: Job? = null
+    private var actionJob: Job? = null
 
     fun start() {
-        scope.launch {
+        if (loopJob != null) return
+        loopJob = scope.launch {
             while (true) {
-                val nextBlinkDelay = Random.nextLong(3000L, 8000L)
-                delay(nextBlinkDelay)
-                if (!forcedClosed) {
-                    doBlink()
-                }
+                delay(Random.nextLong(2400L, 6500L))
+                if (!forcedDrowsy) doBlink(95, 120)
             }
         }
     }
 
-    /** Force the eyes fully shut (sleep) or release them back to normal blinking. */
     fun setSleeping(sleeping: Boolean) {
-        forcedClosed = sleeping
-        if (sleeping) {
-            scope.launch { animateTo(0f, 400) }
-        } else {
-            scope.launch { animateTo(1f, 250) }
+        forcedDrowsy = sleeping
+        actionJob?.cancel()
+        actionJob = scope.launch {
+            if (sleeping) animateBothTo(0.34f, 450) else animateBothTo(1f, 260)
         }
     }
 
-    private suspend fun doBlink() {
-        animateTo(0f, 120)
-        animateTo(1f, 110)
+    fun perform(hint: BlinkHint, winkSide: WinkSide = WinkSide.NONE) {
+        when (hint) {
+            BlinkHint.NATURAL -> Unit
+            BlinkHint.BLINK -> blinkOnce()
+            BlinkHint.DOUBLE_BLINK -> scope.launch {
+                doBlink(75, 95)
+                delay(130)
+                doBlink(75, 110)
+            }
+            BlinkHint.SLOW_BLINK -> scope.launch { doBlink(260, 320) }
+            BlinkHint.HALF_BLINK -> scope.launch {
+                animateBothTo(0.45f, 170)
+                delay(230)
+                animateBothTo(if (forcedDrowsy) 0.34f else 1f, 220)
+            }
+            BlinkHint.WINK -> wink(winkSide)
+        }
     }
 
-    private suspend fun animateTo(target: Float, durationMs: Int) {
-        val steps = 8
+    fun blinkOnce() {
+        scope.launch { doBlink(95, 120) }
+    }
+
+    private fun wink(side: WinkSide) {
+        if (side == WinkSide.NONE) return
+        actionJob?.cancel()
+        actionJob = scope.launch {
+            val flow = if (side == WinkSide.LEFT) _leftOpenMultiplier else _rightOpenMultiplier
+            animateSingleTo(flow, 0.04f, 115)
+            delay(80)
+            animateSingleTo(flow, 1f, 150)
+        }
+    }
+
+    private suspend fun doBlink(closeMs: Int, openMs: Int) {
+        actionJob?.cancel()
+        animateBothTo(0.03f, closeMs)
+        animateBothTo(if (forcedDrowsy) 0.34f else 1f, openMs)
+    }
+
+    private suspend fun animateBothTo(target: Float, durationMs: Int) {
+        val steps = 10
         val start = _eyeOpenAmount.value
-        val stepDelay = (durationMs / steps).toLong().coerceAtLeast(1)
+        val delayMs = (durationMs / steps).toLong().coerceAtLeast(1)
         for (i in 1..steps) {
-            val t = i / steps.toFloat()
+            val t = easeOut(i / steps.toFloat())
             _eyeOpenAmount.update { start + (target - start) * t }
-            delay(stepDelay)
+            delay(delayMs)
         }
         _eyeOpenAmount.update { target }
     }
 
-    /** Trigger a single quick blink on demand, e.g. right after waking up. */
-    fun blinkOnce() {
-        scope.launch { doBlink() }
+    private suspend fun animateSingleTo(flow: MutableStateFlow<Float>, target: Float, durationMs: Int) {
+        val steps = 8
+        val start = flow.value
+        val delayMs = (durationMs / steps).toLong().coerceAtLeast(1)
+        for (i in 1..steps) {
+            val t = easeOut(i / steps.toFloat())
+            flow.update { start + (target - start) * t }
+            delay(delayMs)
+        }
+        flow.update { target }
     }
+
+    private fun easeOut(t: Float): Float = 1f - (1f - t) * (1f - t)
 }

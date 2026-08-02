@@ -1,83 +1,287 @@
-package com.example.eyesbuddy.animation
+﻿package com.example.eyesbuddy.animation
 
+import com.example.eyesbuddy.data.BlinkHint
+import com.example.eyesbuddy.data.CompanionAction
+import com.example.eyesbuddy.data.CompanionBehavior
+import com.example.eyesbuddy.data.CompanionEffect
 import com.example.eyesbuddy.data.Emotion
+import com.example.eyesbuddy.data.WinkSide
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import java.util.Calendar
+import kotlin.math.roundToInt
+import kotlin.random.Random
 
 /**
- * Central decision-maker for which Emotion is shown.
- * Call the report* functions from EyesScreen whenever a relevant event
- * happens; this class handles priority + auto-decay back to NEUTRAL/SLEEPY.
- *
- * Priority (highest first): ANGRY > SURPRISED > EXCITED > HAPPY > CURIOUS > SLEEPY > NEUTRAL
+ * Finite-state personality engine.
+ * Every second it observes context, chooses a weighted action, and emits a new
+ * behavior snapshot. Event methods briefly override the baseline for touch,
+ * shake, charge, and full-battery reactions.
  */
 class EmotionEngine(private val scope: CoroutineScope) {
 
-    private val _emotion = MutableStateFlow(Emotion.NEUTRAL)
-    val emotion: StateFlow<Emotion> = _emotion
+    private val _behavior = MutableStateFlow(CompanionBehavior())
+    val behavior: StateFlow<CompanionBehavior> = _behavior
 
-    private var tapTimestamps = mutableListOf<Long>()
     private var isCharging = false
     private var isIdle = false
     private var batteryLevel = 100
+    private var transientJob: Job? = null
+    private var loopJob: Job? = null
 
-    private var transientJob: kotlinx.coroutines.Job? = null
+    init {
+        startLoop()
+    }
 
     fun reportTap() {
-        val now = System.currentTimeMillis()
-        tapTimestamps.add(now)
-        tapTimestamps = tapTimestamps.filter { now - it < 1500 }.toMutableList()
+        showTransient(
+            behaviorFor(CompanionAction.CURIOUS, Emotion.CURIOUS).copy(
+                blinkHint = BlinkHint.WINK,
+                winkSide = if (Random.nextBoolean()) WinkSide.LEFT else WinkSide.RIGHT
+            ),
+            1100
+        )
+    }
 
-        if (tapTimestamps.size >= 4) {
-            showTransient(Emotion.ANGRY, 2000)
-        } else {
-            showTransient(Emotion.CURIOUS, 1200)
-        }
+    fun reportDoubleTap() {
+        showTransient(
+            behaviorFor(CompanionAction.SMILE, Emotion.PLAYFUL).copy(
+                blinkHint = BlinkHint.WINK,
+                winkSide = WinkSide.RIGHT,
+                smile = 1f
+            ),
+            1300
+        )
+    }
+
+    fun reportLongPress() {
+        showTransient(
+            behaviorFor(CompanionAction.PEEK, Emotion.SHY).copy(
+                lookY = 0.35f,
+                glow = 0.36f,
+                blinkHint = BlinkHint.HALF_BLINK
+            ),
+            1800
+        )
     }
 
     fun reportShake() {
-        showTransient(Emotion.SURPRISED, 1500)
+        showTransient(
+            behaviorFor(CompanionAction.REACT, Emotion.SURPRISED).copy(
+                effect = CompanionEffect.DIZZY,
+                pupilScale = 1.35f,
+                blinkHint = BlinkHint.DOUBLE_BLINK
+            ),
+            1700
+        )
+    }
+
+    fun reportLoudSound() {
+        showTransient(behaviorFor(CompanionAction.REACT, Emotion.SCARED), 1400)
     }
 
     fun reportChargerJustConnected() {
-        showTransient(Emotion.EXCITED, 2000)
+        showTransient(
+            behaviorFor(CompanionAction.CELEBRATE, Emotion.CHARGING).copy(
+                effect = CompanionEffect.SPARKLES,
+                blinkHint = BlinkHint.SLOW_BLINK,
+                smile = 1f,
+                glow = 0.95f
+            ),
+            2600
+        )
+    }
+
+    fun reportChargerDisconnected() {
+        showTransient(
+            behaviorFor(CompanionAction.REACT, Emotion.SURPRISED).copy(
+                lookX = -0.55f,
+                blinkHint = BlinkHint.DOUBLE_BLINK
+            ),
+            1600
+        )
+    }
+
+    fun reportBatteryFull() {
+        showTransient(
+            behaviorFor(CompanionAction.CELEBRATE, Emotion.FULL_BATTERY).copy(
+                effect = CompanionEffect.SPARKLES,
+                smile = 1f,
+                glow = 1f
+            ),
+            2400
+        )
     }
 
     fun setCharging(charging: Boolean) {
         isCharging = charging
-        recomputeBaseline()
     }
 
     fun setIdle(idle: Boolean) {
         isIdle = idle
-        recomputeBaseline()
     }
 
     fun setBatteryLevel(level: Int) {
-        batteryLevel = level
-        recomputeBaseline()
+        batteryLevel = level.coerceIn(0, 100)
     }
 
-    /** Shows an emotion immediately, then falls back to the baseline after [durationMs]. */
-    private fun showTransient(e: Emotion, durationMs: Long) {
+    private fun startLoop() {
+        loopJob?.cancel()
+        loopJob = scope.launch {
+            while (true) {
+                delay(1000)
+                if (transientJob?.isActive != true) {
+                    _behavior.value = chooseNextBehavior()
+                }
+            }
+        }
+    }
+
+    private fun showTransient(behavior: CompanionBehavior, durationMs: Long) {
         transientJob?.cancel()
-        _emotion.value = e
+        _behavior.value = behavior
         transientJob = scope.launch {
             delay(durationMs)
-            recomputeBaseline()
+            _behavior.value = chooseNextBehavior()
         }
     }
 
-    /** The "resting" emotion when nothing transient is overriding it. */
-    private fun recomputeBaseline() {
-        _emotion.value = when {
-            isCharging -> Emotion.HAPPY
+    private fun chooseNextBehavior(): CompanionBehavior {
+        val baseline = baselineEmotion()
+        val weightedActions = buildList {
+            add(CompanionAction.OBSERVE to 16)
+            add(CompanionAction.LOOK_LEFT to 9)
+            add(CompanionAction.LOOK_RIGHT to 9)
+            add(CompanionAction.LOOK_UP to 6)
+            add(CompanionAction.LOOK_DOWN to 6)
+            add(CompanionAction.BLINK to 9)
+            add(CompanionAction.DOUBLE_BLINK to 4)
+            add(CompanionAction.SMILE to 7)
+            add(CompanionAction.CURIOUS to 8)
+            add(CompanionAction.THINK to 6)
+            add(CompanionAction.PEEK to 4)
+            add(CompanionAction.STRETCH to 4)
+            add(CompanionAction.SLEEPY to if (baseline == Emotion.SLEEPY) 14 else 3)
+            add(CompanionAction.YAWN to if (baseline == Emotion.SLEEPY) 10 else 1)
+            add(CompanionAction.CELEBRATE to if (isCharging) 4 else 1)
+            add(CompanionAction.REACT to 3)
+        }
+        val action = weightedPick(weightedActions)
+        return behaviorFor(action, baseline).copy(isDimmed = isLateNight())
+    }
+
+    private fun baselineEmotion(): Emotion {
+        val hour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
+        return when {
+            batteryLevel <= 15 -> Emotion.LOW_BATTERY
+            batteryLevel >= 100 && isCharging -> Emotion.FULL_BATTERY
+            isCharging -> Emotion.CHARGING
             isIdle -> Emotion.SLEEPY
-            batteryLevel in 1..15 -> Emotion.SLEEPY
-            else -> Emotion.NEUTRAL
+            hour in 5..10 -> Emotion.EXCITED
+            hour in 11..16 -> Emotion.CURIOUS
+            hour in 17..21 -> Emotion.RELAXED
+            else -> Emotion.SLEEPY
         }
     }
+
+    private fun behaviorFor(action: CompanionAction, baseline: Emotion): CompanionBehavior {
+        val emotion = when (action) {
+            CompanionAction.CURIOUS, CompanionAction.PEEK -> Emotion.CURIOUS
+            CompanionAction.THINK -> Emotion.THINKING
+            CompanionAction.SMILE -> if (baseline == Emotion.CHARGING) Emotion.CHARGING else Emotion.HAPPY
+            CompanionAction.STRETCH -> Emotion.PLAYFUL
+            CompanionAction.SLEEPY, CompanionAction.YAWN -> Emotion.SLEEPY
+            CompanionAction.CELEBRATE -> if (batteryLevel >= 100 && isCharging) Emotion.FULL_BATTERY else Emotion.EXCITED
+            CompanionAction.REACT -> Emotion.SURPRISED
+            else -> baseline
+        }
+
+        val look = when (action) {
+            CompanionAction.LOOK_LEFT -> -0.75f to Random.nextFloatIn(-0.15f, 0.2f)
+            CompanionAction.LOOK_RIGHT -> 0.75f to Random.nextFloatIn(-0.15f, 0.2f)
+            CompanionAction.LOOK_UP -> Random.nextFloatIn(-0.18f, 0.18f) to -0.62f
+            CompanionAction.LOOK_DOWN -> Random.nextFloatIn(-0.18f, 0.18f) to 0.62f
+            CompanionAction.PEEK -> Random.nextFloatIn(-0.72f, 0.72f) to 0.34f
+            CompanionAction.THINK -> -0.32f to -0.25f
+            CompanionAction.REACT -> Random.nextFloatIn(-0.9f, 0.9f) to Random.nextFloatIn(-0.45f, 0.45f)
+            else -> Random.nextFloatIn(-0.25f, 0.25f) to Random.nextFloatIn(-0.16f, 0.16f)
+        }
+
+        val blink = when (action) {
+            CompanionAction.BLINK -> BlinkHint.BLINK
+            CompanionAction.DOUBLE_BLINK -> BlinkHint.DOUBLE_BLINK
+            CompanionAction.YAWN, CompanionAction.SLEEPY -> BlinkHint.SLOW_BLINK
+            CompanionAction.PEEK -> BlinkHint.HALF_BLINK
+            else -> BlinkHint.NATURAL
+        }
+
+        val profile = profileFor(emotion)
+        return CompanionBehavior(
+            emotion = emotion,
+            action = action,
+            lookX = look.first,
+            lookY = look.second,
+            pupilScale = profile.pupilScale * when (action) {
+                CompanionAction.REACT -> 1.25f
+                CompanionAction.THINK -> 0.9f
+                else -> 1f
+            },
+            eyeStretch = profile.eyeStretch * if (action == CompanionAction.STRETCH) 1.18f else 1f,
+            eyeSquish = profile.eyeSquish * if (action == CompanionAction.YAWN) 0.72f else 1f,
+            headTilt = when (action) {
+                CompanionAction.THINK -> -0.12f
+                CompanionAction.PEEK -> 0.1f
+                CompanionAction.STRETCH -> Random.nextFloatIn(-0.16f, 0.16f)
+                else -> Random.nextFloatIn(-0.06f, 0.06f)
+            },
+            smile = profile.smile,
+            glow = profile.glow,
+            effect = if (action == CompanionAction.CELEBRATE) CompanionEffect.SPARKLES else CompanionEffect.NONE,
+            blinkHint = blink
+        )
+    }
+
+    private fun profileFor(emotion: Emotion): EmotionProfile = when (emotion) {
+        Emotion.HAPPY -> EmotionProfile(1f, 1.03f, 1f, 0.65f, 0.65f)
+        Emotion.CURIOUS -> EmotionProfile(1.08f, 1.06f, 1f, 0.25f, 0.72f)
+        Emotion.SLEEPY -> EmotionProfile(0.76f, 0.94f, 0.72f, 0.05f, 0.32f)
+        Emotion.PLAYFUL -> EmotionProfile(1.1f, 1.12f, 0.96f, 0.8f, 0.82f)
+        Emotion.THINKING -> EmotionProfile(0.88f, 0.98f, 0.82f, 0.0f, 0.46f)
+        Emotion.SHY -> EmotionProfile(0.9f, 0.92f, 0.82f, 0.18f, 0.36f)
+        Emotion.EXCITED -> EmotionProfile(1.24f, 1.16f, 1.08f, 1f, 0.95f)
+        Emotion.RELAXED -> EmotionProfile(0.96f, 1f, 0.92f, 0.18f, 0.52f)
+        Emotion.SURPRISED -> EmotionProfile(1.36f, 1.04f, 1.18f, 0.0f, 0.86f)
+        Emotion.SCARED -> EmotionProfile(1.24f, 0.92f, 1.15f, 0.0f, 0.72f)
+        Emotion.EMBARRASSED -> EmotionProfile(0.86f, 0.9f, 0.82f, 0.25f, 0.42f)
+        Emotion.CHARGING -> EmotionProfile(1.08f, 1.08f, 1f, 0.72f, 0.85f)
+        Emotion.FULL_BATTERY -> EmotionProfile(1.18f, 1.12f, 1.05f, 1f, 1f)
+        Emotion.LOW_BATTERY -> EmotionProfile(0.68f, 0.88f, 0.76f, 0.0f, 0.28f)
+    }
+
+    private fun weightedPick(items: List<Pair<CompanionAction, Int>>): CompanionAction {
+        val total = items.sumOf { it.second }
+        var cursor = Random.nextInt(total)
+        for ((action, weight) in items) {
+            cursor -= weight
+            if (cursor < 0) return action
+        }
+        return CompanionAction.OBSERVE
+    }
+
+    private fun isLateNight(): Boolean = Calendar.getInstance().get(Calendar.HOUR_OF_DAY) in 0..4
+
+    private data class EmotionProfile(
+        val pupilScale: Float,
+        val eyeStretch: Float,
+        val eyeSquish: Float,
+        val smile: Float,
+        val glow: Float
+    )
 }
+
+private fun Random.nextFloatIn(min: Float, max: Float): Float =
+    min + (nextFloat() * ((max - min) * 1000f).roundToInt() / 1000f)

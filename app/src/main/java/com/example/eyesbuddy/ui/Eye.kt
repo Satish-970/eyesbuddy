@@ -1,96 +1,155 @@
-package com.example.eyesbuddy.ui
+﻿package com.example.eyesbuddy.ui
 
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.Dp
+import com.example.eyesbuddy.data.CompanionEffect
 import com.example.eyesbuddy.data.Emotion
 import com.example.eyesbuddy.data.EyeState
 import kotlin.math.min
 
-/**
- * Draws one eye. All shape decisions (base height, eyelid slant, iris color)
- * come from [state.emotion]; blink/idle/look direction come from the rest
- * of [state]. Pure OLED-friendly: background must stay pure black, eye
- * colors are the only lit pixels.
- */
 @Composable
-fun Eye(state: EyeState, size: Dp, modifier: Modifier = Modifier) {
-    Canvas(modifier = modifier.size(size)) {
-        drawEye(state, this)
+fun Eye(state: EyeState, size: Dp, isLeft: Boolean, modifier: Modifier = Modifier) {
+    val lookX by animateFloatAsState(state.lookX, spring(Spring.DampingRatioMediumBouncy, Spring.StiffnessLow), label = "lookX")
+    val lookY by animateFloatAsState(state.lookY, spring(Spring.DampingRatioMediumBouncy, Spring.StiffnessLow), label = "lookY")
+    val open by animateFloatAsState(state.eyeOpenAmount, spring(Spring.DampingRatioNoBouncy, Spring.StiffnessMedium), label = "open")
+    val pupil by animateFloatAsState(state.pupilScale, spring(Spring.DampingRatioMediumBouncy, Spring.StiffnessMedium), label = "pupil")
+    val stretch by animateFloatAsState(state.eyeStretch, spring(Spring.DampingRatioMediumBouncy, Spring.StiffnessLow), label = "stretch")
+    val squish by animateFloatAsState(state.eyeSquish, spring(Spring.DampingRatioNoBouncy, Spring.StiffnessMedium), label = "squish")
+    val smile by animateFloatAsState(state.smile, spring(Spring.DampingRatioMediumBouncy, Spring.StiffnessLow), label = "smile")
+    val glow by animateFloatAsState(if (state.isDimmed) state.glow * 0.6f else state.glow, label = "glow")
+
+    val sideOpen = if (isLeft) state.leftOpenMultiplier else state.rightOpenMultiplier
+    val rendered = state.copy(
+        lookX = lookX,
+        lookY = lookY,
+        eyeOpenAmount = open * sideOpen,
+        pupilScale = pupil,
+        eyeStretch = stretch,
+        eyeSquish = squish,
+        smile = smile,
+        glow = glow
+    )
+
+    Canvas(
+        modifier = modifier
+            .size(size)
+            .graphicsLayer(rotationZ = state.headTilt * 18f)
+    ) {
+        drawEye(rendered, isLeft)
     }
 }
 
-private fun emotionBaseOpenRatio(emotion: Emotion): Float = when (emotion) {
-    Emotion.SLEEPY -> 0.35f
-    Emotion.SURPRISED -> 1.25f
-    Emotion.ANGRY -> 0.55f
-    Emotion.EXCITED -> 1.15f
-    Emotion.HAPPY -> 0.85f
-    Emotion.CURIOUS -> 1.05f
-    Emotion.NEUTRAL -> 1f
+private fun emotionOpenRatio(emotion: Emotion): Float = when (emotion) {
+    Emotion.SLEEPY, Emotion.LOW_BATTERY -> 0.5f
+    Emotion.SHY, Emotion.EMBARRASSED -> 0.68f
+    Emotion.THINKING -> 0.76f
+    Emotion.RELAXED -> 0.9f
+    Emotion.HAPPY, Emotion.CHARGING -> 0.98f
+    Emotion.CURIOUS, Emotion.PLAYFUL -> 1.06f
+    Emotion.EXCITED, Emotion.FULL_BATTERY -> 1.14f
+    Emotion.SURPRISED, Emotion.SCARED -> 1.24f
 }
 
-private fun irisColor(emotion: Emotion): Color = when (emotion) {
-    Emotion.ANGRY -> Color(0xFFFF4433)
-    Emotion.HAPPY -> Color(0xFF3DDC84)
-    Emotion.EXCITED -> Color(0xFFFFD54A)
-    Emotion.SURPRISED -> Color(0xFF4FC3F7)
-    Emotion.SLEEPY -> Color(0xFF6E7B8B)
-    Emotion.CURIOUS -> Color(0xFF64B5F6)
-    Emotion.NEUTRAL -> Color(0xFF64DFDF)
+private fun emotionColor(emotion: Emotion): Color = when (emotion) {
+    Emotion.HAPPY -> Color(0xFF55F0A1)
+    Emotion.CURIOUS -> Color(0xFF60D7FF)
+    Emotion.SLEEPY -> Color(0xFF7C8EA6)
+    Emotion.PLAYFUL -> Color(0xFFFFD166)
+    Emotion.THINKING -> Color(0xFFB5A7FF)
+    Emotion.SHY, Emotion.EMBARRASSED -> Color(0xFFFF7BB2)
+    Emotion.EXCITED, Emotion.FULL_BATTERY -> Color(0xFFFFE66D)
+    Emotion.RELAXED -> Color(0xFF70E4D7)
+    Emotion.SURPRISED -> Color(0xFF7DD3FC)
+    Emotion.SCARED -> Color(0xFFFF6B6B)
+    Emotion.CHARGING -> Color(0xFF53F27B)
+    Emotion.LOW_BATTERY -> Color(0xFFFF5A4F)
 }
 
-private fun drawEye(state: EyeState, scope: DrawScope) {
-    val w = scope.size.width
-    val h = scope.size.height
-    val center = Offset(w / 2f, h / 2f)
+private fun DrawScope.drawEye(state: EyeState, isLeft: Boolean) {
+    val w = size.width
+    val h = size.height
+    val center = Offset(w / 2f, h * 0.48f)
+    val color = emotionColor(state.emotion)
 
-    val emotionRatio = emotionBaseOpenRatio(state.emotion)
-    // Blink (eyeOpenAmount) always wins over the emotion-based openness,
-    // so the eye still fully closes to blink even when e.g. surprised.
-    val openness = (emotionRatio * state.eyeOpenAmount).coerceIn(0.02f, 1.3f)
+    val openness = (emotionOpenRatio(state.emotion) * state.eyeOpenAmount * state.eyeSquish).coerceIn(0.025f, 1.35f)
+    val eyeWidth = w * 0.78f * state.eyeStretch
+    val eyeHeight = h * 0.58f * openness
+    val topLeft = Offset(center.x - eyeWidth / 2f, center.y - eyeHeight / 2f)
+    val eyeSize = Size(eyeWidth, eyeHeight)
+    val radius = CornerRadius(eyeHeight / 2f, eyeHeight / 2f)
 
-    val baseEyeHeight = h * 0.7f
-    val eyeHeight = baseEyeHeight * openness
-    val eyeWidth = w * 0.8f
+    drawCircle(color.copy(alpha = 0.12f * state.glow), radius = eyeWidth * 0.62f, center = center)
+    drawCircle(color.copy(alpha = 0.08f * state.glow), radius = eyeWidth * 0.47f, center = center)
 
-    // Sclera: soft dark shape barely visible (keeps mostly-black OLED look),
-    // acts as a subtle boundary for the iris/pupil to sit in.
-    scope.drawRoundRect(
-        color = Color(0xFF141414),
-        topLeft = Offset(center.x - eyeWidth / 2f, center.y - eyeHeight / 2f),
-        size = androidx.compose.ui.geometry.Size(eyeWidth, eyeHeight),
-        cornerRadius = androidx.compose.ui.geometry.CornerRadius(eyeHeight / 2f, eyeHeight / 2f)
+    drawRoundRect(
+        color = Color(0xFF090B0D),
+        topLeft = topLeft,
+        size = eyeSize,
+        cornerRadius = radius
+    )
+    drawRoundRect(
+        color = color.copy(alpha = 0.22f + 0.18f * state.glow),
+        topLeft = topLeft,
+        size = eyeSize,
+        cornerRadius = radius,
+        style = Stroke(width = w * 0.025f)
     )
 
-    // Iris/pupil offset by look direction, clamped so it never leaves the eye shape.
-    val maxOffsetX = (eyeWidth / 2f) * 0.35f
-    val maxOffsetY = (eyeHeight / 2f) * 0.35f
-    val irisOffset = Offset(state.lookX * maxOffsetX, state.lookY * maxOffsetY)
+    val maxOffsetX = eyeWidth * 0.24f
+    val maxOffsetY = eyeHeight * 0.22f
+    val irisCenter = center + Offset(state.lookX * maxOffsetX, state.lookY * maxOffsetY)
+    val irisRadius = min(eyeWidth, eyeHeight.coerceAtLeast(h * 0.18f)) * 0.28f * state.pupilScale
 
-    val irisRadius = min(eyeWidth, eyeHeight) * 0.32f * state.pupilScale
-    scope.drawCircle(
-        color = irisColor(state.emotion),
-        radius = irisRadius,
-        center = center + irisOffset
-    )
+    drawCircle(color.copy(alpha = 0.95f), radius = irisRadius, center = irisCenter)
+    drawCircle(Color.Black, radius = irisRadius * 0.48f, center = irisCenter)
+    drawCircle(Color.White.copy(alpha = 0.82f), radius = irisRadius * 0.13f, center = irisCenter + Offset(-irisRadius * 0.32f, -irisRadius * 0.32f))
 
-    val pupilRadius = irisRadius * 0.45f
-    scope.drawCircle(
-        color = Color.Black,
-        radius = pupilRadius,
-        center = center + irisOffset
-    )
+    if (state.smile > 0.05f) {
+        val smileWidth = eyeWidth * (0.32f + state.smile * 0.12f)
+        val smileTop = center.y + eyeHeight * (0.28f + 0.08f * state.smile)
+        drawArc(
+            color = color.copy(alpha = 0.55f * state.smile),
+            startAngle = 18f,
+            sweepAngle = 144f,
+            useCenter = false,
+            topLeft = Offset(center.x - smileWidth / 2f, smileTop - h * 0.12f),
+            size = Size(smileWidth, h * 0.24f),
+            style = Stroke(width = w * 0.024f)
+        )
+    }
 
-    // Small highlight for life-like sparkle.
-    scope.drawCircle(
-        color = Color.White.copy(alpha = 0.85f),
-        radius = irisRadius * 0.15f,
-        center = center + irisOffset + Offset(-irisRadius * 0.3f, -irisRadius * 0.3f)
+    if ((state.emotion == Emotion.SHY || state.emotion == Emotion.EMBARRASSED) && isLeft) {
+        drawCircle(Color(0xFFFF5C9A).copy(alpha = 0.18f), radius = w * 0.1f, center = Offset(w * 0.18f, h * 0.7f))
+    }
+
+    if (state.effect == CompanionEffect.SPARKLES) {
+        drawSparkles(color)
+    }
+}
+
+private fun DrawScope.drawSparkles(color: Color) {
+    val points = listOf(
+        Offset(size.width * 0.18f, size.height * 0.18f),
+        Offset(size.width * 0.84f, size.height * 0.24f),
+        Offset(size.width * 0.76f, size.height * 0.78f)
     )
+    points.forEachIndexed { index, point ->
+        val r = size.minDimension * (0.025f + index * 0.006f)
+        drawLine(color.copy(alpha = 0.7f), point + Offset(-r, 0f), point + Offset(r, 0f), strokeWidth = r * 0.35f)
+        drawLine(color.copy(alpha = 0.7f), point + Offset(0f, -r), point + Offset(0f, r), strokeWidth = r * 0.35f)
+    }
 }

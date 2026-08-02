@@ -1,16 +1,23 @@
-package com.example.eyesbuddy.data
+﻿package com.example.eyesbuddy.data
 
 /**
- * All expressions the eyes can display. EmotionEngine decides which one
- * is active based on sensor + interaction input; Eye.kt decides how each
- * one is drawn (shape, pupil size, eyelid angle, color tint).
+ * Emotional states supported by the companion renderer and behavior engine.
+ * The engine moves between these every second so the character never settles
+ * into a static idle loop.
  */
 enum class Emotion {
-    NEUTRAL,
-    HAPPY,      // charging, calm
-    CURIOUS,    // single tap / new touch
-    SLEEPY,     // idle for a while, or low battery
-    SURPRISED,  // shake detected
-    ANGRY,      // rapid repeated taps
-    EXCITED     // charger just connected
+    HAPPY,
+    CURIOUS,
+    SLEEPY,
+    PLAYFUL,
+    THINKING,
+    SHY,
+    EXCITED,
+    RELAXED,
+    SURPRISED,
+    SCARED,
+    EMBARRASSED,
+    CHARGING,
+    FULL_BATTERY,
+    LOW_BATTERY
 }
