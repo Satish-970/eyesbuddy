@@ -1,9 +1,12 @@
-﻿package com.example.eyesbuddy.animation
+﻿@file:Suppress("unused")
+
+package com.example.eyesbuddy.animation
 
 import com.example.eyesbuddy.data.BlinkHint
 import com.example.eyesbuddy.data.CompanionAction
 import com.example.eyesbuddy.data.CompanionBehavior
 import com.example.eyesbuddy.data.CompanionEffect
+import com.example.eyesbuddy.data.FaceExpression
 import com.example.eyesbuddy.data.Emotion
 import com.example.eyesbuddy.data.WinkSide
 import kotlinx.coroutines.CoroutineScope
@@ -15,6 +18,7 @@ import kotlinx.coroutines.launch
 import java.util.Calendar
 import kotlin.math.roundToInt
 import kotlin.random.Random
+import kotlin.time.Duration.Companion.milliseconds
 
 /**
  * Finite-state personality engine.
@@ -80,9 +84,65 @@ class EmotionEngine(private val scope: CoroutineScope) {
         )
     }
 
-    fun reportLoudSound() {
-        showTransient(behaviorFor(CompanionAction.REACT, Emotion.SCARED), 1400)
+    fun reportTouchDragStart() {
+        showTransient(
+            behaviorFor(CompanionAction.CURIOUS, Emotion.CURIOUS).copy(
+                blinkHint = BlinkHint.BLINK,
+                glow = 0.8f,
+                smile = 0.6f
+            ),
+            1200
+        )
     }
+
+    fun reportTouchDragEnd() {
+        showTransient(
+            behaviorFor(CompanionAction.OBSERVE, Emotion.RELAXED).copy(
+                blinkHint = BlinkHint.SLOW_BLINK,
+                glow = 0.55f
+            ),
+            900
+        )
+    }
+
+    fun reportFaceExpression(expression: FaceExpression, confidence: Float = 0.7f) {
+        val behavior = when (expression) {
+            FaceExpression.HAPPY -> behaviorFor(CompanionAction.SMILE, Emotion.HAPPY).copy(
+                smile = 1f,
+                glow = 0.9f,
+                blinkHint = BlinkHint.BLINK
+            )
+            FaceExpression.PLAYFUL -> behaviorFor(CompanionAction.STRETCH, Emotion.PLAYFUL).copy(
+                smile = 0.9f,
+                glow = 0.95f,
+                effect = CompanionEffect.SPARKLES
+            )
+            FaceExpression.CURIOUS -> behaviorFor(CompanionAction.CURIOUS, Emotion.CURIOUS).copy(
+                glow = 0.75f
+            )
+            FaceExpression.SLEEPY -> behaviorFor(CompanionAction.SLEEPY, Emotion.SLEEPY).copy(
+                blinkHint = BlinkHint.SLOW_BLINK,
+                glow = 0.3f,
+                eyeSquish = 0.68f
+            )
+            FaceExpression.SURPRISED -> behaviorFor(CompanionAction.REACT, Emotion.SURPRISED).copy(
+                pupilScale = 1.28f,
+                glow = 0.9f,
+                blinkHint = BlinkHint.DOUBLE_BLINK
+            )
+            FaceExpression.SHY -> behaviorFor(CompanionAction.PEEK, Emotion.SHY).copy(
+                glow = 0.42f,
+                smile = 0.22f
+            )
+            FaceExpression.NEUTRAL -> behaviorFor(CompanionAction.OBSERVE, baselineEmotion()).copy(
+                glow = 0.55f * confidence.coerceIn(0.45f, 1f)
+            )
+            FaceExpression.LOST, FaceExpression.UNKNOWN -> behaviorFor(CompanionAction.OBSERVE, Emotion.RELAXED)
+        }
+
+        showTransient(behavior, if (expression == FaceExpression.SLEEPY) 1800 else 1300)
+    }
+
 
     fun reportChargerJustConnected() {
         showTransient(
@@ -133,7 +193,7 @@ class EmotionEngine(private val scope: CoroutineScope) {
         loopJob?.cancel()
         loopJob = scope.launch {
             while (true) {
-                delay(1000)
+                delay(1000.milliseconds)
                 if (transientJob?.isActive != true) {
                     _behavior.value = chooseNextBehavior()
                 }
@@ -145,7 +205,7 @@ class EmotionEngine(private val scope: CoroutineScope) {
         transientJob?.cancel()
         _behavior.value = behavior
         transientJob = scope.launch {
-            delay(durationMs)
+            delay(durationMs.milliseconds)
             _behavior.value = chooseNextBehavior()
         }
     }

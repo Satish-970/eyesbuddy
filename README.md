@@ -7,13 +7,16 @@ This is not a wallpaper or charging animation. The main screen is Companion Mode
 ## What is implemented
 
 - Pure black OLED-first Companion Mode.
-- Top 60% expressive Canvas eyes with spring-driven gaze, pupil dilation, glow, stretch, squish, sleepy/curious/excited/shy/surprised/charging/full/low-battery states.
+- Responsive mobile layout that adapts to portrait and landscape without locking the screen orientation.
+- Expressive Canvas eyes with spring-driven gaze, pupil dilation, glow, stretch, squish, brows, blush, sleepy/curious/excited/shy/surprised/charging/full/low-battery states.
 - One-second finite-state behavior loop: observe, choose weighted action, perform, repeat.
 - Natural blink system with random blinks, double blinks, slow blinks, half-blinks, and winks.
 - Touch reactions: tap = curious, double tap = playful wink and 12/24-hour toggle, long press = shy plus hidden settings panel.
+- Drag/release reactions: dragging makes the companion track your finger, and lift-off triggers a short "drop" reaction.
 - Tilt tracking from the accelerometer, shake reaction, charging wake-up, unplug surprise, full-battery celebration.
-- Animated flip-style clock with adjustable brightness.
-- Date and offline-first cached weather row.
+- Digit-by-digit flip clock with seconds, AM/PM support, and adjustable brightness.
+- Live weather card with real-time temperature, condition, location, feels-like, and update time.
+- Front-camera face sensing that shows thought bubbles like "you’re back" and reacts to detected face presence/mood cues.
 - Optional loud-sound detector class kept off by default until microphone permission is requested.
 
 ## Project structure
@@ -45,6 +48,7 @@ The workflow at `.github/workflows/build.yml` builds a debug APK and uploads it 
 
 ## Notes
 
-- Weather is currently offline-first with a cached default. Swap `WeatherRepository` for a real provider once you choose an API and location strategy.
+- Weather is fetched live from a public endpoint and cached locally for fallback when the network is unavailable.
+- Face sensing uses the front camera and needs camera permission granted on the device.
 - Hilt and a full settings/onboarding stack are not added yet; the core architecture is separated enough to introduce them cleanly.
 - The app intentionally avoids `java.time` so minSdk 24 works without extra desugaring dependencies.

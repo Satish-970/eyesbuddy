@@ -12,6 +12,7 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
@@ -109,6 +110,19 @@ private fun DrawScope.drawEye(state: EyeState, isLeft: Boolean) {
         style = Stroke(width = w * 0.025f)
     )
 
+    drawBrow(state, isLeft, center, eyeWidth, eyeHeight, color)
+
+    if (state.eyeOpenAmount < 0.74f || state.emotion == Emotion.SLEEPY) {
+        val lidY = topLeft.y + eyeHeight * 0.12f
+        drawLine(
+            color = Color.Black.copy(alpha = 0.33f + 0.12f * (1f - state.eyeOpenAmount)),
+            start = Offset(topLeft.x + eyeWidth * 0.06f, lidY),
+            end = Offset(topLeft.x + eyeWidth * 0.94f, lidY),
+            strokeWidth = w * 0.02f,
+            cap = StrokeCap.Round
+        )
+    }
+
     val maxOffsetX = eyeWidth * 0.24f
     val maxOffsetY = eyeHeight * 0.22f
     val irisCenter = center + Offset(state.lookX * maxOffsetX, state.lookY * maxOffsetY)
@@ -136,9 +150,62 @@ private fun DrawScope.drawEye(state: EyeState, isLeft: Boolean) {
         drawCircle(Color(0xFFFF5C9A).copy(alpha = 0.18f), radius = w * 0.1f, center = Offset(w * 0.18f, h * 0.7f))
     }
 
+    if (state.emotion == Emotion.SHY || state.emotion == Emotion.EMBARRASSED) {
+        val blushX = if (isLeft) w * 0.28f else w * 0.72f
+        drawCircle(Color(0xFFFF5C9A).copy(alpha = 0.12f), radius = w * 0.08f, center = Offset(blushX, h * 0.73f))
+    }
+
     if (state.effect == CompanionEffect.SPARKLES) {
         drawSparkles(color)
     }
+}
+
+private fun DrawScope.drawBrow(
+    state: EyeState,
+    isLeft: Boolean,
+    center: Offset,
+    eyeWidth: Float,
+    eyeHeight: Float,
+    color: Color
+) {
+    val lift = when (state.emotion) {
+        Emotion.SLEEPY -> -0.12f
+        Emotion.LOW_BATTERY -> -0.08f
+        Emotion.THINKING -> 0.02f
+        Emotion.SHY, Emotion.EMBARRASSED -> 0.03f
+        Emotion.RELAXED -> 0.04f
+        Emotion.HAPPY -> 0.06f
+        Emotion.CURIOUS -> 0.1f
+        Emotion.PLAYFUL -> 0.08f
+        Emotion.EXCITED, Emotion.CHARGING, Emotion.FULL_BATTERY -> 0.14f
+        Emotion.SURPRISED -> 0.2f
+        Emotion.SCARED -> 0.16f
+    }
+    val slant = when (state.emotion) {
+        Emotion.SLEEPY, Emotion.LOW_BATTERY -> -0.16f
+        Emotion.THINKING -> 0.1f
+        Emotion.SHY, Emotion.EMBARRASSED -> -0.04f
+        Emotion.RELAXED -> 0.02f
+        Emotion.HAPPY -> 0.06f
+        Emotion.CURIOUS -> 0.14f
+        Emotion.PLAYFUL -> 0.1f
+        Emotion.EXCITED, Emotion.CHARGING, Emotion.FULL_BATTERY -> 0.18f
+        Emotion.SURPRISED -> 0.26f
+        Emotion.SCARED -> -0.22f
+    }
+    val browY = center.y - eyeHeight * 0.92f + lift * size.height * 0.16f
+    val innerX = if (isLeft) center.x + eyeWidth * 0.2f else center.x - eyeWidth * 0.2f
+    val outerX = if (isLeft) center.x - eyeWidth * 0.26f else center.x + eyeWidth * 0.26f
+    val innerY = browY + slant * eyeHeight * 0.34f
+    val outerY = browY - slant * eyeHeight * 0.34f
+
+    drawLine(
+        color = color.copy(alpha = 0.42f + 0.3f * state.glow),
+        start = Offset(innerX, innerY),
+        end = Offset(outerX, outerY),
+        strokeWidth = size.width * 0.028f,
+        cap = StrokeCap.Round
+    )
 }
 
 private fun DrawScope.drawSparkles(color: Color) {

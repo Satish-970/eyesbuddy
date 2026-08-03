@@ -68,5 +68,9 @@ enum class CompanionAction {
 data class WeatherSnapshot(
     val temperature: Int = 28,
     val condition: String = "Clear",
-    val icon: String = "sun"
+    val icon: String = "sun",
+    val locationName: String = "Offline",
+    val feelsLike: Int = temperature,
+    val description: String = "Pleasant sky",
+    val updatedAtMillis: Long = 0L
 )
