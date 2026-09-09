@@ -46,6 +46,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
@@ -60,6 +61,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.eyesbuddy.animation.BlinkManager
 import com.example.eyesbuddy.animation.EmotionEngine
+import com.example.eyesbuddy.domain.quotes.LocalQuoteRepository
+import com.example.eyesbuddy.domain.quotes.QuoteScheduler
 import com.example.eyesbuddy.data.CompanionBehavior
 import com.example.eyesbuddy.data.Emotion
 import com.example.eyesbuddy.data.FaceExpression
@@ -69,7 +72,11 @@ import com.example.eyesbuddy.data.WeatherSnapshot
 import com.example.eyesbuddy.sensors.BatteryReceiver
 import com.example.eyesbuddy.sensors.FaceSenseController
 import com.example.eyesbuddy.sensors.MotionSensor
+import com.example.eyesbuddy.sensors.GyroscopeSensorSource
+import com.example.eyesbuddy.sensors.MotionSensorConsentStore
 import com.example.eyesbuddy.weather.WeatherRepository
+import com.example.eyesbuddy.weather.LocationPermissionGate
+import com.example.eyesbuddy.weather.LocationSource
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.delay
 import java.text.SimpleDateFormat
@@ -97,8 +104,15 @@ private fun CompanionMode() {
     val blinkManager = remember { BlinkManager(scope).apply { start() } }
     val emotionEngine = remember { EmotionEngine(scope) }
     val motionSensor = remember { MotionSensor(context) }
+    val gyroscope = remember { GyroscopeSensorSource(context) }
+    val motionConsentStore = remember { MotionSensorConsentStore(context) }
+    val locationPermissionGate = remember { LocationPermissionGate(context) }
+    val locationSource = remember { LocationSource(context) }
     val batteryReceiver = remember { BatteryReceiver(context) }
     val weatherRepository = remember { WeatherRepository() }
+    val quoteRepository = remember { LocalQuoteRepository() }
+    val quoteScheduler = remember { QuoteScheduler() }
+    val perimeterColorStore = remember { PerimeterColorStore(context) }
     val faceSenseController = remember { FaceSenseController() }
     var cameraGranted by remember {
         mutableStateOf(
@@ -108,12 +122,18 @@ private fun CompanionMode() {
     val cameraPermissionLauncher = rememberLauncherForActivityResult(RequestPermission()) { granted ->
         cameraGranted = granted
     }
+    var locationGranted by remember { mutableStateOf(locationPermissionGate.isGranted) }
+    val locationPermissionLauncher = rememberLauncherForActivityResult(RequestPermission()) { granted ->
+        locationGranted = granted
+    }
+    var motionConsent by remember { mutableStateOf<Boolean?>(null) }
 
     val behavior by emotionEngine.behavior.collectAsState()
     val eyeOpen by blinkManager.eyeOpenAmount.collectAsState()
     val leftOpen by blinkManager.leftOpenMultiplier.collectAsState()
     val rightOpen by blinkManager.rightOpenMultiplier.collectAsState()
     val tilt by motionSensor.tilt.collectAsState()
+    val gyroGaze by gyroscope.gaze.collectAsState()
     val shakePulse by motionSensor.shakePulse.collectAsState()
     val isCharging by batteryReceiver.isCharging.collectAsState()
     val batteryLevel by batteryReceiver.batteryLevel.collectAsState()
@@ -131,13 +151,43 @@ private fun CompanionMode() {
     var use24Hour by remember { mutableStateOf(false) }
     var showSettings by remember { mutableStateOf(false) }
     var thoughtBubble by remember { mutableStateOf<String?>(null) }
+    var perimeterColor by remember { mutableStateOf(Color(0xFF65E6C2)) }
 
     DisposableEffect(Unit) {
         motionSensor.start()
+        if (gyroscope.isAvailable && motionConsent == true) gyroscope.start()
         batteryReceiver.register()
         onDispose {
             motionSensor.stop()
+            gyroscope.stop()
             batteryReceiver.unregister()
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        motionConsentStore.consent.collect { motionConsent = it }
+    }
+
+    LaunchedEffect(Unit) {
+        perimeterColorStore.color.collect { perimeterColor = Color(it) }
+    }
+
+    LaunchedEffect(motionConsent) {
+        if (motionConsent == true && gyroscope.isAvailable) gyroscope.start()
+        else gyroscope.stop()
+    }
+
+    LaunchedEffect(gyroscope.isAvailable, motionConsent) {
+        if (gyroscope.isAvailable && motionConsent == null) {
+            thoughtBubble = "Motion sensors can help me follow your tilt. Allow?"
+        }
+    }
+
+    LaunchedEffect(locationGranted) {
+        if (!locationGranted) {
+            thoughtBubble = "Approximate location helps show local weather."
+            delay(1800L)
+            locationPermissionLauncher.launch(Manifest.permission.ACCESS_COARSE_LOCATION)
         }
     }
 
@@ -170,10 +220,22 @@ private fun CompanionMode() {
     }
 
     LaunchedEffect(Unit) {
-        weatherRepository.refresh()
+        val location = if (locationGranted) locationSource.lastKnownLocation() else null
+        weatherRepository.refresh(location?.latitude, location?.longitude)
         while (true) {
-            weatherRepository.refresh()
+            val updatedLocation = if (locationGranted) locationSource.lastKnownLocation() else null
+            weatherRepository.refresh(updatedLocation?.latitude, updatedLocation?.longitude)
             delay(20.minutes)
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        val quotes = quoteRepository.quotes()
+        while (true) {
+            quoteScheduler.nextIfDue(System.currentTimeMillis(), quotes)?.let { quote ->
+                if (thoughtBubble == null) thoughtBubble = quote.text
+            }
+            delay(60_000L)
         }
     }
 
@@ -232,8 +294,8 @@ private fun CompanionMode() {
     }
 
     val touch = touchLook
-    val lookX = ((touch?.first ?: behavior.lookX) + tilt.first * 0.26f).coerceIn(-1f, 1f)
-    val lookY = ((touch?.second ?: behavior.lookY) + tilt.second * 0.2f).coerceIn(-1f, 1f)
+    val lookX = ((touch?.first ?: behavior.lookX) + tilt.first * 0.20f + gyroGaze.first * 0.12f).coerceIn(-1f, 1f)
+    val lookY = ((touch?.second ?: behavior.lookY) + tilt.second * 0.16f + gyroGaze.second * 0.10f).coerceIn(-1f, 1f)
 
     val state = EyeState(
         lookX = lookX,
@@ -411,6 +473,14 @@ private fun CompanionMode() {
                 )
             }
         }
+        PerimeterCountdownOverlay(color = perimeterColor)
+    }
+
+    if (gyroscope.isAvailable && motionConsent == null) {
+        MotionConsentDialog(
+            onAllow = { scope.launch { motionConsentStore.setConsent(true) } },
+            onNotNow = { scope.launch { motionConsentStore.setConsent(false) } }
+        )
     }
 
     if (showSettings) {
@@ -419,6 +489,11 @@ private fun CompanionMode() {
             use24Hour = use24Hour,
             onBrightness = { clockBrightness = it },
             onToggleTime = { use24Hour = !use24Hour },
+            onPerimeterColor = {
+                perimeterColor = it
+                scope.launch { perimeterColorStore.setColor(it.toArgb()) }
+            },
+            onRevokeMotion = { scope.launch { motionConsentStore.setConsent(false) } },
             onClose = { showSettings = false }
         )
     }
@@ -684,33 +759,7 @@ private fun FlipDigitTile(digit: Char, brightness: Float) {
         tonalElevation = 0.dp,
         shadowElevation = 0.dp
     ) {
-        AnimatedContent(
-            targetState = digit,
-            transitionSpec = {
-                (slideInVertically(animationSpec = tween(180)) { fullHeight -> fullHeight / 2 } + fadeIn(animationSpec = tween(180)))
-                    .togetherWith(
-                        slideOutVertically(animationSpec = tween(160)) { fullHeight -> -fullHeight / 2 } + fadeOut(animationSpec = tween(160))
-                    )
-                    .using(SizeTransform(clip = false))
-            },
-            label = "clockDigit"
-        ) { target ->
-            Box(
-                modifier = Modifier
-                    .width(42.dp)
-                    .height(58.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = target.toString(),
-                    color = Color.White.copy(alpha = (0.95f * brightness).coerceIn(0.4f, 1f)),
-                    fontFamily = FontFamily.Monospace,
-                    fontWeight = FontWeight.SemiBold,
-                    fontSize = 30.sp,
-                    textAlign = TextAlign.Center
-                )
-            }
-        }
+        FlipDigit(value = digit, brightness = brightness)
     }
 }
 
@@ -878,6 +927,8 @@ private fun CompanionSettings(
     use24Hour: Boolean,
     onBrightness: (Float) -> Unit,
     onToggleTime: () -> Unit,
+    onPerimeterColor: (Color) -> Unit,
+    onRevokeMotion: () -> Unit,
     onClose: () -> Unit
 ) {
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.BottomCenter) {
@@ -898,6 +949,24 @@ private fun CompanionSettings(
             }
             Text("Clock brightness", color = Color.White.copy(alpha = 0.7f), fontSize = 13.sp)
             Slider(value = brightness, onValueChange = onBrightness, valueRange = 0.35f..1f)
+            Text("Perimeter color", color = Color.White.copy(alpha = 0.7f), fontSize = 13.sp)
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                listOf(Color(0xFF65E6C2), Color(0xFFFFD166), Color(0xFFFF7A90), Color(0xFF7CB7FF)).forEach { color ->
+                    Box(
+                        modifier = Modifier
+                            .width(28.dp)
+                            .height(28.dp)
+                            .background(color)
+                            .pointerInput(color) { detectTapGestures { onPerimeterColor(color) } }
+                    )
+                }
+            }
+            Text(
+                "Disable motion reactions",
+                color = Color.White.copy(alpha = 0.7f),
+                fontSize = 13.sp,
+                modifier = Modifier.pointerInput(Unit) { detectTapGestures { onRevokeMotion() } }
+            )
             Text(
                 "Long press again to close",
                 color = Color.White.copy(alpha = 0.45f),
@@ -907,4 +976,20 @@ private fun CompanionSettings(
             Spacer(modifier = Modifier.height(2.dp))
         }
     }
+}
+
+@Composable
+private fun MotionConsentDialog(onAllow: () -> Unit, onNotNow: () -> Unit) {
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onNotNow,
+        title = { Text("A little motion?", color = Color.White) },
+        text = { Text("EyesBuddy would like to use motion sensors to react to how you tilt and move your device. Allow?", color = Color.White.copy(alpha = 0.78f)) },
+        confirmButton = {
+            Text("Allow", color = Color(0xFF65E6C2), modifier = Modifier.pointerInput(Unit) { detectTapGestures { onAllow() } }.padding(8.dp))
+        },
+        dismissButton = {
+            Text("Not now", color = Color.White.copy(alpha = 0.7f), modifier = Modifier.pointerInput(Unit) { detectTapGestures { onNotNow() } }.padding(8.dp))
+        },
+        containerColor = Color(0xFF15171C)
+    )
 }

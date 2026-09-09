@@ -5,6 +5,9 @@ import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
+import android.view.Surface
+import android.view.WindowManager
+import com.example.eyesbuddy.domain.motion.MotionInterpreter
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlin.math.sqrt
@@ -19,10 +22,11 @@ import kotlin.math.sqrt
  * and cheap on battery. The screen itself is throttled separately by the
  * render loop (30fps active / 5fps idle) regardless of sensor rate.
  */
-class MotionSensor(context: Context) : SensorEventListener {
+class MotionSensor(context: Context, private val interpreter: MotionInterpreter = MotionInterpreter()) : SensorEventListener {
 
     private val sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
     private val accelerometer = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
+    private val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
 
     private val _tilt = MutableStateFlow(0f to 0f) // (x, y)
     val tilt: StateFlow<Pair<Float, Float>> = _tilt
@@ -46,14 +50,19 @@ class MotionSensor(context: Context) : SensorEventListener {
     }
 
     override fun onSensorChanged(event: SensorEvent) {
-        val x = event.values[0]
-        val y = event.values[1]
+        val rawX = event.values[0]
+        val rawY = event.values[1]
         val z = event.values[2]
 
+        val (x, y) = when (windowManager.defaultDisplay.rotation) {
+            Surface.ROTATION_90 -> -rawY to rawX
+            Surface.ROTATION_180 -> -rawX to -rawY
+            Surface.ROTATION_270 -> rawY to -rawX
+            else -> rawX to rawY
+        }
+
         // Normalise tilt to roughly -1f..1f (device flat = 0,0).
-        val normX = (x / SensorManager.GRAVITY_EARTH).coerceIn(-1f, 1f)
-        val normY = (y / SensorManager.GRAVITY_EARTH).coerceIn(-1f, 1f)
-        _tilt.value = normX to normY
+        _tilt.value = interpreter.tiltFromAcceleration(x, y, SensorManager.GRAVITY_EARTH)
 
         // Shake detection: look at sudden change in total acceleration magnitude.
         val magnitude = sqrt((x * x + y * y + z * z).toDouble()).toFloat()

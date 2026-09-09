@@ -31,8 +31,8 @@ class BlinkManager(private val scope: CoroutineScope) {
         if (loopJob != null) return
         loopJob = scope.launch {
             while (true) {
-                delay(Random.nextLong(2400L, 6500L))
-                if (!forcedDrowsy) doBlink(95, 120)
+                delay(Random.nextLong(AnimationConfig.NATURAL_BLINK_MIN_MS, AnimationConfig.NATURAL_BLINK_MAX_MS))
+                if (!forcedDrowsy) doBlink(AnimationConfig.BLINK_CLOSE_MS, AnimationConfig.BLINK_OPEN_MS)
             }
         }
     }
@@ -110,4 +110,11 @@ class BlinkManager(private val scope: CoroutineScope) {
     }
 
     private fun easeOut(t: Float): Float = 1f - (1f - t) * (1f - t)
+}
+
+private object AnimationConfig {
+    const val NATURAL_BLINK_MIN_MS = 4200L
+    const val NATURAL_BLINK_MAX_MS = 8200L
+    const val BLINK_CLOSE_MS = 140
+    const val BLINK_OPEN_MS = 180
 }

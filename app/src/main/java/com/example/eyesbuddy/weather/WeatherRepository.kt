@@ -27,10 +27,15 @@ class WeatherRepository {
     )
     val weather: StateFlow<WeatherSnapshot> = _weather
 
-    suspend fun refresh() {
+    suspend fun refresh(latitude: Double? = null, longitude: Double? = null) {
         withContext(Dispatchers.IO) {
             try {
-                val connection = (URL(WEATHER_ENDPOINT).openConnection() as HttpURLConnection).apply {
+                val endpoint = if (latitude != null && longitude != null) {
+                    "$WEATHER_ENDPOINT?format=j1&lat=$latitude&lon=$longitude"
+                } else {
+                    WEATHER_ENDPOINT
+                }
+                val connection = (URL(endpoint).openConnection() as HttpURLConnection).apply {
                     connectTimeout = 7000
                     readTimeout = 7000
                     requestMethod = "GET"
@@ -103,6 +108,6 @@ class WeatherRepository {
     }
 
     private companion object {
-        const val WEATHER_ENDPOINT = "https://wttr.in/?format=j1"
+        const val WEATHER_ENDPOINT = "https://wttr.in/"
     }
 }
